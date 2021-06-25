@@ -45,11 +45,9 @@ class GenerativeReplay:
 		self.optDis = optim.Adam(self.D.parameters(), lr=3e-3)
 		self.buffer = [None for x in range(int(BUFFER_SIZE))]
 		self.optim_buffer = [None for x in range(int(BUFFER_SIZE))]
-		self.positive_buffer = [None for x in range(int(BUFFER_SIZE))]
-		self.freeze = False
-		self.highest_reward = None
+		self.highest_reward_state = None
 		self.training = False
-		self.first = True
+		self.use_optim_buffer = False
 		self.i = 0
 		self.sample_s = int(len(self.buffer)*TRAIN_TO_TEST)
 		torch.set_printoptions(precision=3, sci_mode=False, linewidth=240, profile=None)
@@ -90,17 +88,13 @@ class GenerativeReplay:
 
 		if self.i >= BUFFER_SIZE:
 			self.i = 0
-			if not self.freeze:
-				self.train()
+			self.train()
 			return True
 		return False
 
 	def edit_optim_buffer(self, reward):
-		self.highest_reward = reward
+		self.highest_reward_state = reward
 		self.optim_buffer = self.buffer
-
-	def edit_positive_buffer(self):
-		self.positive_buffer = self.buffer
 
 
 	def cal_loss(self, decision, minibatch_size):
@@ -111,22 +105,12 @@ class GenerativeReplay:
 	# Train the model with what we have in the buffer and some generated data
 	def train(self):
 		train_data = None
-		# if not self.training:
-		# 	# train_data = self.get_real_sample(self.sample_s)
-		# 	train_data = torch.FloatTensor(self.buffer[:self.sample_s])
-		# else:
-		# 	# train_data = self.get_real_sample(self.sample_s, True)
-		# 	if self.positive_buffer[0] != None:
-		# 		train_data = torch.FloatTensor(self.positive_buffer[:self.sample_s])
-		# 	else:
-		# 		train_data = torch.FloatTensor(self.optim_buffer[:self.sample_s])
+		if self.optim_buffer and self.optim_buffer[0] != None:
+			train_data = torch.FloatTensor(self.optim_buffer[:self.sample_s])
+		else:
+			train_data = torch.FloatTensor(self.buffer[:self.sample_s])
 
-		# if not self.training and self.optim_buffer[0] != None:
-		# 	train_data = torch.FloatTensor(self.buffer[:self.sample_s])
-		# else:
-		# 	train_data = torch.FloatTensor(self.optim_buffer[:self.sample_s])
-
-		train_data = torch.FloatTensor(self.buffer[:self.sample_s])
+		# train_data = torch.FloatTensor(self.buffer[:self.sample_s])
 		# train_data = self.get_random_sample_from_buffer(int(self.sample_s))
 
 		for epoch in range(EPOCHS):
@@ -159,6 +143,21 @@ class GenerativeReplay:
 			self.optGen.step()
 			
 
+	
+
+
+	def sample(self, batch_size):	
+		with torch.no_grad():
+			noise_data = self.get_noise_sample(batch_size)
+			outputs = self.G(noise_data)
+			return (
+					torch.FloatTensor(outputs[:, 0:2]),
+					torch.FloatTensor(outputs[:, 2:3]),
+					torch.FloatTensor(outputs[:, 3:5]),
+					torch.FloatTensor(outputs[:, 5:6]),
+					torch.FloatTensor(outputs[:, 6:7])
+					)
+
 	# def sample(self, batch_size):	
 	# 	with torch.no_grad():
 	# 		# 
@@ -177,19 +176,6 @@ class GenerativeReplay:
 	# 				torch.FloatTensor(rewards),
 	# 				torch.FloatTensor(dones)
 	# 				)
-
-
-	def sample(self, batch_size):	
-		with torch.no_grad():
-			noise_data = self.get_noise_sample(batch_size)
-			outputs = self.G(noise_data)
-			return (
-					torch.FloatTensor(outputs[:, 0:2]),
-					torch.FloatTensor(outputs[:, 2:3]),
-					torch.FloatTensor(outputs[:, 3:5]),
-					torch.FloatTensor(outputs[:, 5:6]),
-					torch.FloatTensor(outputs[:, 6:7])
-					)
 
 	# def sample(self, batch_size):
 	# 	with torch.no_grad():

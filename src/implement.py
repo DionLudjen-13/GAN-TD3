@@ -16,7 +16,7 @@ if __name__ == "__main__":
 	# Hyper parameters
 
 	# General
-	USE_GENERATIVE = False
+	USE_GENERATIVE = True
 	NO_REPLAY = False
 	RECORD_TRAINING_TIMES = False
 	ENV = "MountainCarContinuous-v0"
@@ -25,11 +25,7 @@ if __name__ == "__main__":
 	EVAL_FREQ = 5e3
 	MAX_TIMESTEPS = 2e7
 	SEED = 10
-	# FILE_NAME = ENV + "_" + list(str(datetime.now()).split())[-1]
 	FILE_NAME = "a"
-	
-
-	MILESTONES = [8, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110]
 
 	# TD3 parameters
 	EXPL_NOISE = 0.1
@@ -39,12 +35,6 @@ if __name__ == "__main__":
 	POLICY_NOISE = 0.2
 	NOISE_CLIP = 0.5
 	POLICY_FREQ = 2
-
-	evaluations = []
-	td3times = []
-	vaetimes = []
-
-	running_av = 0
 
 	print_interval = 1000
 
@@ -83,16 +73,29 @@ if __name__ == "__main__":
 
 	policy = TD3.TD3(**kwargs)
 
+	# Use optim buffer or not. Type 0 uses episode reward and 1 uses state as comparison
+	OPTIMAL_BUFFER = True
+	OPTIMAL_BUFFER_TYPE = 0
+
+	print("Use Optim Buffer:", OPTIMAL_BUFFER)
+	if OPTIMAL_BUFFER:
+		if OPTIMAL_BUFFER_TYPE == 0:
+			print("Buffer Type: Episode Reward")
+		else:		
+			print("Buffer Type: State")
+
 	# Make the replay component
 	replay_component = None
 	if USE_GENERATIVE:
 		replay_component = GenerativeReplay()
+		if OPTIMAL_BUFFER:
+			replay_component.use_optim_buffer = True
 	elif NO_REPLAY:
 		replay_component = utils.ReplayBuffer(state_dim, action_dim, 256)
+		OPTIMAL_BUFFER = False
 	else:
 		replay_component = utils.ReplayBuffer(state_dim, action_dim)
-
-	training_moments = []
+		OPTIMAL_BUFFER = False
 	
 
 	state, done = env.reset(), False
@@ -100,21 +103,26 @@ if __name__ == "__main__":
 	episode_timesteps = 0
 	episode_num = 0
 	max_state = None
+	evaluations = []
 
-	training_start_GAN = False
-	training_start_TD3 = False
+	TD3_training = False
 
 
+	# During the initial exploration of the environment, achieving positive reward is extremely rare
+	# In order see the capabilities (without having to re-run) of ER in a positive reward scenario this is implemented
 	guarantee_finish = False
 	gf_count = 1
 	action = None
 	gf = 0
 	if guarantee_finish:
 		action = [1.0]
+
+
+	
+		
 	for t in range(int(MAX_TIMESTEPS)):
 		# env.render()
 
-	
 		episode_timesteps += 1
 
 		if t >= END:
@@ -130,16 +138,15 @@ if __name__ == "__main__":
 					action = np.array([1.0])
 			else:
 				action = env.action_space.sample()
-			# episode_num = 0
+			episode_num = 0
 		else:
-			# if replay_component.highest_reward == None:
-			# 	replay_component.edit_optim_buffer(-10000)
-			# replay_component.training = True
-			# action = (
-			# 	policy.select_action(np.array(state))
-			# 	+ np.random.normal(0, max_action * EXPL_NOISE, size=action_dim)
-			# ).clip(-max_action, max_action)
-			action = env.action_space.sample()
+			if OPTIMAL_BUFFER and replay_component.highest_reward_state == None:
+				replay_component.edit_optim_buffer(-10000)
+			replay_component.training = True
+			action = (
+				policy.select_action(np.array(state))
+				+ np.random.normal(0, max_action * EXPL_NOISE, size=action_dim)
+			).clip(-max_action, max_action)
 
 		# Perform action
 		next_state, reward, done, _ = env.step(action)
@@ -148,22 +155,12 @@ if __name__ == "__main__":
 
 		# Store data in replay component
 		GAN_training = replay_component.add(state, action, next_state, reward, done_bool)
-		if GAN_training:
-			training_moments.append(episode_num)
-
-
-		if max_state == None:
-			max_state = -100
-		elif state[0] > max_state:
-			max_state = state[0]
-
-		# if t >= START_TIMESTEPS:
-		# 	# if episode_timesteps == 1:
-		# 	# 	# print("			Start:", state, action)
-
-		# 	if done:
-		# 		# print("			Last: ", state, action)
-		# 		print(replay_component.sample(5))
+		
+		if OPTIMAL_BUFFER and OPTIMAL_BUFFER_TYPE == 1:
+			if max_state == None:
+				max_state = -100
+			elif state[0] > max_state:
+				max_state = state[0]
 
 		state = next_state
 		episode_reward += reward
@@ -171,37 +168,35 @@ if __name__ == "__main__":
 
 		
 		# Train agent after collecting sufficient data
-		# if t >= START_TIMESTEPS:
-		# 	# env.render()
-		# 	# if episode_timesteps == 1:
-		# 	# 	print(replay_component.sample(2))
-		# 	if not training_start_TD3:
-		# 		print("Training TD3 start...")
-		# 		training_start_TD3 = True
-		# 		# replay_component.freeze = True
-		# 	policy.train(replay_component, BATCH_SIZE)
-		# 	# if replay_component.highest_reward > 0:
-		# 	# 	replay_component.freeze = True
+		if t >= START_TIMESTEPS:
+			# env.render()
+			if TD3_training:
+				print("TD3 Training...")
+				TD3_training = True
+			policy.train(replay_component, BATCH_SIZE)
 			
 		if done: 
-			# if episode_num == 0:
-				# print(replay_component.buffer)
 			if guarantee_finish:
 				if episode_reward > 0:
 					if gf == gf_count-1:
 						guarantee_finish = False
 					else:
 						gf += 1
-			# if replay_component.training and t >= START_TIMESTEPS:
-				# if replay_component.highest_reward < max_state:
-				# 	print(max_state)
-				# 	replay_component.edit_optim_buffer(max_state)
+			if OPTIMAL_BUFFER:
+				if replay_component.training and t >= START_TIMESTEPS:
+					if OPTIMAL_BUFFER_TYPE == 0:
+						if episode_reward < -10 or episode_reward > 0:
+							if replay_component.highest_reward_state < episode_reward:
+								print(episode_reward)
+								replay_component.edit_optim_buffer(episode_reward)
+					else:
+						if replay_component.highest_reward_state < max_state:
+							print(max_state)
+							replay_component.edit_optim_buffer(max_state)
 			
 
 
-			running_av = 0.4*running_av + 0.6*episode_reward
-
-			print(f"Episode {episode_num}, reward is {episode_reward}, running average {running_av}, episode_timesteps {episode_timesteps}")
+			print(f"Episode {episode_num}, reward is {episode_reward}, episode_timesteps {episode_timesteps}")
 			if t >= START_TIMESTEPS:
 				evaluations.append(episode_reward)
 				np.save(f"./results/{FILE_NAME}", evaluations)
